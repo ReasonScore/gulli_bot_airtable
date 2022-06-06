@@ -1,7 +1,8 @@
 {
     "scripts": {
         "lint": "eslint --ext .js,.jsx,.ts,.tsx frontend",
-        "run": "block run"
+        "run": "block run",
+        "deply": "block release"
     },
     "dependencies": {
         "@reasonscore/core": "file:../core",
