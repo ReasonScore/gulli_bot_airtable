@@ -43,16 +43,16 @@ function HelloWorldTypescriptApp() {
                     mainClaimIds.push(record.id)
                 }
             }
+            const repository = new RepositoryLocalPure();
 
             //CalculateMainClaims
             for (const mainClaimId of mainClaimIds) {
-                const repository = new RepositoryLocalPure();
                 const actions: Action[] = [];
                 processClaimId(mainClaimId, actions);
                 await calculateScoreActions({ actions: actions, repository: repository })
                 await calculateScoreActions({
                     actions: [
-                        new Action(new ScoreTree(mainClaimId, mainClaimId, undefined, mainClaimId), undefined, "add_scoreTree")
+                        new Action(new ScoreTree(mainClaimId, "tree-" + mainClaimId, undefined, mainClaimId), undefined, "add_scoreTree")
                     ], repository: repository
                 })
                 for (const record of records) {
@@ -64,10 +64,9 @@ function HelloWorldTypescriptApp() {
                         }
                     }
                 }
-
-                // console.log("result", await (repository.getScore(mainClaimId)));
-                // console.log("data", repository.rsData)
             }
+            repository.rsData.actionsLog = []
+            console.log("rsData", repository.rsData)
 
 
         } catch (error) {
@@ -99,9 +98,11 @@ function HelloWorldTypescriptApp() {
         {!waiting ? '' :
             <Loader scale={0.5} />
         }
-        <pre>
-            {/* {JSON.stringify(rsData, undefined, 2)} */}
-        </pre>
+
+        {/* <pre>
+            {JSON.stringify(rsData, undefined, 2)}
+        </pre> */}
+
     </div>;
 }
 
