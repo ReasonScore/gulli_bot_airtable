@@ -1,19 +1,45 @@
-import { Button, initializeBlock, Loader, useRecords } from '@airtable/blocks/ui';
-import React, { useState } from 'react';
+import { Button, initializeBlock, Loader, useCursor, useLoadable, useRecords } from '@airtable/blocks/ui';
+import React, { useEffect, useState } from 'react';
 import { base } from '@airtable/blocks';
-import { Action, calculateScoreActions, Claim, ClaimEdge, isScore, RepositoryLocalPure, RsData, Score, ScoreTree } from "@reasonscore/core";
+import { Action, calculateScoreActions, Claim, ClaimEdge, RepositoryLocalPure, Score, ScoreTree } from "@reasonscore/core";
+import Cursor from '@airtable/blocks/dist/types/src/models/cursor';
 
+interface MainClaims { [key: string]: { content: string, id: string } }
 
-function HelloWorldTypescriptApp() {
+function GulliBotAirtable() {
     const table = base.getTableByName("Claims")
     const records = useRecords(table)
     const edgesByParendId: { [key: string]: ClaimEdge[] } = {};
     const claims: { [key: string]: Claim } = {};
-    const mainClaimIds: string[] = [];
     const [waiting, setWaiting] = useState(false);
+    const [currentMainClaims, setCurrentMainClaim] = useState<MainClaims>({});
+    const cursor = useCursor();
+    useLoadable(cursor);
+
+    useEffect(() => {
+        cursor.watch(['selectedRecordIds'], (_cursor: Cursor) => {
+            if (_cursor.activeTableId === "tblJg9zcOB3J7OiAY") {
+                const filteredRecords = records.filter(record => _cursor.selectedRecordIds.includes(record.id));
+                const newMainClaims: { [key: string]: { content: string, id: string } } = {}
+                for (const record of filteredRecords) {
+                    const mainClaimRecordsInfo = record.getCellValue("Main Claim") as { id: string, name: string }[]
+                    for (const mainClaimRecordInfo of mainClaimRecordsInfo) {
+                        newMainClaims[mainClaimRecordInfo.id] = { content: mainClaimRecordInfo.name, id: mainClaimRecordInfo.id }
+                    }
+                }
+                if (JSON.stringify(currentMainClaims) !== JSON.stringify(newMainClaims)) {
+                    setCurrentMainClaim((c) => { return newMainClaims })
+                }
+            }
+        })
+    }, []);
+
+
+
 
     async function process() {
         setWaiting(true)
+        const mainClaimIds: string[] = [];
         try {
 
 
@@ -39,10 +65,15 @@ function HelloWorldTypescriptApp() {
                 }
 
                 // find Main Claims
-                if ((record.getCellValue("Affects") as any).name === "is Main") {
-                    mainClaimIds.push(record.id)
-                }
+                // if ((record.getCellValue("Affects") as any).name === "is Main") {
+                //     mainClaimIds.push(record.id)
+                // }
             }
+
+            for (const mainClaimInfo of Object.values(currentMainClaims)) {
+                mainClaimIds.push(mainClaimInfo.id)
+            }
+
             const repository = new RepositoryLocalPure();
 
             //CalculateMainClaims
@@ -85,6 +116,7 @@ function HelloWorldTypescriptApp() {
         }
     }
 
+
     return <div>
         <Button
             onClick={process}
@@ -98,12 +130,17 @@ function HelloWorldTypescriptApp() {
         {!waiting ? '' :
             <Loader scale={0.5} />
         }
+        <ul>
+            {Object.values(currentMainClaims).map((mainClaim) => {
+                return <li key={mainClaim.id}>{mainClaim.content}</li>
+            })}
+        </ul>
 
         {/* <pre>
-            {JSON.stringify(rsData, undefined, 2)}
+            {JSON.stringify(Object.values(currentMainClaims), undefined, 2)}
         </pre> */}
 
     </div>;
 }
 
-initializeBlock(() => <HelloWorldTypescriptApp />);
+initializeBlock(() => <GulliBotAirtable />);
