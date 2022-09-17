@@ -28,74 +28,101 @@ function GulliBotAirtable() {
                     }
                 }
                 if (JSON.stringify(currentMainClaims) !== JSON.stringify(newMainClaims)) {
-                    setCurrentMainClaim((c) => { return newMainClaims })
+                    setCurrentMainClaim(newMainClaims)
                 }
             }
         })
     }, []);
 
 
+    async function handleDownloadClick() {
+        setWaiting(true)
+        const mainClaimIds: string[] = [];
+        try {
+            const repository = await calculateScores(mainClaimIds);
+            repository.rsData.actionsLog = []
+            console.log("rsData", repository.rsData)
+            download(
+                JSON.stringify(repository.rsData),
+                'rsData.json'
+            )
+        } catch (error) {
+            console.error(error)
+        }
+        setWaiting(false);
+    }
 
+    async function calculateScores(mainClaimIds: string[]) {
+        for (const record of records) {
+            // collect all the claims
+            if (record.name.length > 0) {
+                claims[record.id] = new Claim(record.name, record.id);
+                const parents = record.getCellValue("Parent Claims") as { id: string; }[] || undefined;
+                if (parents) {
+                    for (const parent of parents) {
+                        const edge = new ClaimEdge(parent.id, record.id,
+                            (record.getCellValue("Affects") as any).name === "Importance" ? "relevance" : "confidence",
+                            record.getCellValue("Pro") as boolean
+                        );
+                        if (edgesByParendId[parent.id]) {
+                            edgesByParendId[parent.id].push(edge);
+                        } else {
+                            edgesByParendId[parent.id] = [edge];
+                        }
+                    }
+                }
+            }
+
+            // find Main Claims
+            // if ((record.getCellValue("Affects") as any).name === "is Main") {
+            //     mainClaimIds.push(record.id)
+            // }
+        }
+
+        for (const mainClaimInfo of Object.values(currentMainClaims)) {
+            mainClaimIds.push(mainClaimInfo.id);
+        }
+
+        const repository = new RepositoryLocalPure();
+
+        //CalculateMainClaims
+        for (const mainClaimId of mainClaimIds) {
+            const actions: Action[] = [];
+            processClaimId(mainClaimId, actions);
+            await calculateScoreActions({ actions: actions, repository: repository });
+            await calculateScoreActions({
+                actions: [
+                    new Action(new ScoreTree(mainClaimId, "mainScore", undefined, "ScoreTree"), undefined, "add_scoreTree")
+                ], repository: repository
+            });
+
+        }
+        return repository;
+    }
 
     async function process() {
         setWaiting(true)
         const mainClaimIds: string[] = [];
         try {
-
-
             // Add Items
+            const repository = await calculateScores(mainClaimIds);
+
+            // Update Cells
             for (const record of records) {
-                // collect all the claims
-                if (record.name.length > 0) {
-                    claims[record.id] = new Claim(record.name, record.id);
-                    const parents = record.getCellValue("Parent Claims") as { id: string }[] || undefined;
-                    if (parents) {
-                        for (const parent of parents) {
-                            const edge = new ClaimEdge(parent.id, record.id,
-                                (record.getCellValue("Affects") as any).name === "Importance" ? "relevance" : "confidence",
-                                (record.getCellValue("Team") as any).name === "Skepti" ? false : true
-                            )
-                            if (edgesByParendId[parent.id]) {
-                                edgesByParendId[parent.id].push(edge)
-                            } else {
-                                edgesByParendId[parent.id] = [edge]
-                            }
-                        }
+                const scoreId = repository.rsData.scoreIdsBySourceId[record.id]
+                if (scoreId) {
+                    const confidence = (repository.rsData.items[scoreId[0]] as Score).confidence;
+                    if (record.getCellValue("Confidence") !== confidence) {
+                        await table.updateRecordAsync(record.id, { "Confidence": confidence })
                     }
-                }
 
-                // find Main Claims
-                // if ((record.getCellValue("Affects") as any).name === "is Main") {
-                //     mainClaimIds.push(record.id)
-                // }
-            }
-
-            for (const mainClaimInfo of Object.values(currentMainClaims)) {
-                mainClaimIds.push(mainClaimInfo.id)
-            }
-
-            const repository = new RepositoryLocalPure();
-
-            //CalculateMainClaims
-            for (const mainClaimId of mainClaimIds) {
-                const actions: Action[] = [];
-                processClaimId(mainClaimId, actions);
-                await calculateScoreActions({ actions: actions, repository: repository })
-                await calculateScoreActions({
-                    actions: [
-                        new Action(new ScoreTree(mainClaimId, "tree-" + mainClaimId, undefined, mainClaimId), undefined, "add_scoreTree")
-                    ], repository: repository
-                })
-                for (const record of records) {
-                    const scoreId = repository.rsData.scoreIdsBySourceId[record.id]
-                    if (scoreId) {
-                        const confidence = (repository.rsData.items[scoreId[0]] as Score).confidence;
-                        if (record.getCellValue("Confidence") !== confidence) {
-                            await table.updateRecordAsync(record.id, { "Confidence": confidence })
-                        }
+                    const relevance = (repository.rsData.items[scoreId[0]] as Score).relevance;
+                    if (record.getCellValue("Relevance") !== relevance) {
+                        await table.updateRecordAsync(record.id, { "Relevance": relevance })
                     }
                 }
             }
+
             repository.rsData.actionsLog = []
             console.log("rsData", repository.rsData)
 
@@ -106,12 +133,35 @@ function GulliBotAirtable() {
         setWaiting(false);
     }
 
-    function processClaimId(claimId: string, actions: Action[], parentId?: string | undefined) {
+    function processClaimId(claimId: string, actions: Action[]) {//}, parentId?: string | undefined) {
         actions.push(new Action(claims[claimId], undefined, "add_claim", claimId),)
         if (edgesByParendId[claimId]) {
             for (const edge of edgesByParendId[claimId]) {
                 actions.push(new Action(edge, undefined, "add_claimEdge"))
-                processClaimId(edge.childId, actions, claimId);
+                processClaimId(edge.childId, actions);//, claimId);
+            }
+        }
+    }
+
+    const download = async (data: any, suggestedFileName: string) => {
+        // TODO: Consider to moving to core from this and from editor
+        // @ts-ignore
+        if (window.showSaveFilePicker) {
+            // @ts-ignore
+            const fileHandle = await window.showSaveFilePicker();
+            // Create a FileSystemWritableFileStream to write to.
+            const writable = await fileHandle.createWritable(data);
+            // Write the contents of the file to the stream.
+            await writable.write();
+            // Close the file and write the contents to disk.
+            await writable.close();
+        } else {
+            if (window.confirm("Please use Chrome version 91 or above to download large files. Do you want to attempt anyay?")) {
+                var hiddenElement = document.createElement('a');
+                hiddenElement.href = 'data:text/csv;charset=utf-8,' + encodeURI(data);
+                hiddenElement.target = '_blank';
+                hiddenElement.download = suggestedFileName;
+                hiddenElement.click();
             }
         }
     }
@@ -124,8 +174,18 @@ function GulliBotAirtable() {
             size="large"
             icon="bolt"
             disabled={waiting}
+            margin={3}
         >
             Process
+        </Button>
+        <Button
+            onClick={handleDownloadClick}
+            variant="primary"
+            size="large"
+            icon="bolt"
+            disabled={waiting}
+        >
+            Download
         </Button>
         {!waiting ? '' :
             <Loader scale={0.5} />
